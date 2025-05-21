@@ -1,0 +1,13 @@
+{
+    "Codegeex.CompletionDelay": 3,
+    "Codegeex.GenerationPreference": "line by line",
+    "files.associations": {
+        "array": "cpp",
+        "string": "cpp",
+        "string_view": "cpp",
+        "deque": "cpp",
+        "vector": "cpp",
+        "iterator": "cpp",
+        "unordered_map": "cpp"
+    }
+}
