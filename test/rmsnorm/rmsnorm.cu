@@ -1,30 +1,28 @@
-#include "softmax.h"
+#include "rmsnorm.h"
 #include "stdio.h"
 
 #define OFFSET(row, id, col) (row*col+id)
 #define FLOAT4(data) (reinterpret_cast<float4*>(&(data))[0])
 
-__global__ void softmax_naive(float* in, float* out, const int M, const int N){
+__global__ void rmsnorm_naive(float* in, float* out, const int M, const int N, float eps=1e-5){
     int idx=blockDim.x*blockIdx.x+threadIdx.x;
     if(idx<M){
         float* x=in + idx*N;
-        float maxv=-INFINITY;
-        for(int i=0;i<N;i++){
-            maxv=max(maxv,x[i]);
-        }
-        float* y=out+idx*N;
         float sum=0;
         for(int i=0;i<N;i++){
-            sum+=expf(x[i]-maxv);
+            float temp=x[i];
+            sum+=temp*temp;
         }
+        sum=sqrtf(sum/N+eps);
+        float* y=out+idx*N;
         for(int i=0;i<N;i++){
-            y[i]=expf(x[i]-maxv)/sum;
+            y[i]=x[i]/sum;
         }
     }
 }
 
 int main(void){
-    const int M=1024,N=1024;
+    const int M=1,N=4;
     const int Block_size=32, data_size=M*N*sizeof(float);
     float* hin,*hout,*din,*dout, *dhout;
     hin=(float*)malloc(data_size);
@@ -38,15 +36,16 @@ int main(void){
     cudaMalloc(&dout,data_size);
 
     cudaMemcpy(din,hin,data_size,cudaMemcpyDefault);
-    dim3 griddim((M+Block_size-1)/Block_size);
+    dim3 griddim(M);
     dim3 blockdim(Block_size);
-    softmax_naive<<<griddim,blockdim>>>(din,dout,M,N);
+
+    rmsnorm_naive<<<griddim,blockdim>>>(din,dout,M,N);
 
     cudaMemcpy(dhout, dout, data_size,cudaMemcpyDefault);
 
-    // for(int i=0;i<M*N;i++){
-    //     printf("%f ",dhout[i]);
-    // }
+    for(int i=0;i<M*N;i++){
+        printf("%f ",dhout[i]);
+    }
 
     cudaFree(din);
     cudaFree(dout);
