@@ -6,8 +6,8 @@ ext_module = load(name="torchSoftmax",
                   sources=["softmax.cu", "softmax_ops.cu"],
                   verbose=True)
 
-M=1024*8
-N=50257
+M=32
+N=256
 data=torch.rand(M,N,dtype=torch.float32,device="cuda:0")
 
 #warm up
@@ -37,7 +37,7 @@ print(torch.allclose(output,toutput,1e-5,1e-5))
 # output2=data.clone()
 
 start.record()
-ext_module.torchSoftmaxShared(data,output,M,N,64)
+ext_module.torchSoftmaxShared(data,output,M,N,32)
 end.record()
 torch.cuda.synchronize()
 print(f"SoftmaxShared: {start.elapsed_time(end)}")
@@ -49,7 +49,7 @@ print(torch.allclose(output,toutput,1e-5,1e-5))
 # output3=data.clone()
 
 start.record()
-ext_module.torchSoftmax7(data,output,M,N,64)
+ext_module.torchSoftmax7(data,output,M,N,32)
 end.record()
 torch.cuda.synchronize()
 print(f"torchSoftmax7: {start.elapsed_time(end)}")

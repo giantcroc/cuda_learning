@@ -4,7 +4,7 @@
 #define OFFSET(row, id, col) (row*col+id)
 #define FLOAT4(data) (reinterpret_cast<float4*>(&(data))[0])
 
-__global__ void rmsnorm_naive(float* in, float* out, const int M, const int N, float eps=1e-5){
+__global__ void rmsnorm_naive(float* in, float* out, const int M, const int N, float eps){
     int idx=blockDim.x*blockIdx.x+threadIdx.x;
     if(idx<M){
         float* x=in + idx*N;
@@ -19,6 +19,36 @@ __global__ void rmsnorm_naive(float* in, float* out, const int M, const int N, f
             y[i]=x[i]/sum;
         }
     }
+}
+
+__global__ void rmsnorm_shared(float* in, float* out, const int M, const int N, float eps){
+    int Block_size = blockDim.x;
+    extern __shared__ float shared[];
+    int idx=blockIdx.x;
+    int tid=threadIdx.x;
+
+    float* x=in + idx*N;
+    float sum=0;
+
+    for(int i=tid;i<N;i+=Block_size){
+        sum+=x[i]*x[i];
+    }
+    shared[tid]=sum;
+    __syncthreads();
+
+    for(int stride=Block_size/2;stride>0;stride/=2){
+        __syncthreads();
+        if(tid<stride){
+            shared[tid]+=shared[tid+stride];
+        }
+    }
+    sum=shared[0];
+    sum=sqrtf(sum/N+eps);
+    float* y=out+idx*N;
+    for(int i=0;i<N;i++){
+        y[i]=x[i]/sum;
+    }
+
 }
 
 int main(void){
@@ -39,7 +69,7 @@ int main(void){
     dim3 griddim(M);
     dim3 blockdim(Block_size);
 
-    rmsnorm_naive<<<griddim,blockdim>>>(din,dout,M,N);
+    rmsnorm_shared<<<griddim,blockdim, Block_size*sizeof(float)>>>(din,dout,M,N);
 
     cudaMemcpy(dhout, dout, data_size,cudaMemcpyDefault);
 
