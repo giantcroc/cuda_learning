@@ -514,6 +514,60 @@ __global__ void softmax_forward_kernel7(float* out, const float* inp, int N, int
     }
 }
 
+__global__ void softmax_shm(float* in, float* out, const int M, const int N){
+    extern __shared__ float shared[];
+    int tid=threadIdx.x;
+    int idx=blockIdx.x;
+    const int Block_size=blockDim.x;
+
+    float* x=in+idx*N;
+    float maxv=-INFINITY;
+
+    for(int i=tid;i<N;i+=Block_size){
+        maxv=fmaxf(maxv,x[i]);
+    }
+    shared[tid]=maxv;
+    __syncthreads();
+
+
+    for(int stride=Block_size/2;stride>0;stride>>=1){
+    __syncthreads();
+        if(tid<stride){
+            shared[tid]=fmaxf(shared[tid],shared[tid+stride]);
+        }
+    }
+
+    __syncthreads();
+
+    maxv=shared[0];
+
+    float gsum=0;
+
+    for(int i=tid;i<N;i+=Block_size){
+        gsum+=expf(x[i]-maxv);
+    }
+    shared[tid]=gsum;
+    __syncthreads();
+
+
+    for(int stride=Block_size/2;stride>0;stride>>=1){
+    __syncthreads();
+        if(tid<stride){
+            shared[tid]+=shared[tid+stride];
+        }
+    }
+
+    __syncthreads();
+
+    gsum=shared[0];
+
+    float* y=out+idx*N;
+
+    for(int i=tid;i<N;i+=Block_size){
+        y[i]=expf(x[i]-maxv)/gsum;
+    }
+}
+
 // ----------------------------------------------------------------------------
 // kernel launcher
 
@@ -523,10 +577,10 @@ void softmax_forward1(float* out, const float* inp, int N, int C, const int bloc
     cudaCheck(cudaGetLastError());
 }
 
-void softmax_forward2(float* out, const float* inp, int N, int C, const int block_size) {
+void softmax_forward2(float* out, float* inp, int N, int C, const int block_size) {
     int grid_size = N;
     size_t shared_mem_size = block_size * sizeof(float);
-    softmax_forward_kernel2<<<grid_size, block_size, shared_mem_size>>>(out, inp, N, C);
+    softmax_shm<<<grid_size, block_size, shared_mem_size>>>(inp,out, N, C);
 }
 
 void softmax_forward3(float* out, const float* inp, int N, int C, int block_size) {
@@ -561,7 +615,7 @@ void softmax_forward7(float* out, const float* inp, int N, int C, int block_size
 }
 
 // kernel version dispatch
-void softmax_forward(int kernel_num, float* out, const float* inp, int N, int C, const int block_size) {
+void softmax_forward(int kernel_num, float* out, float* inp, int N, int C, const int block_size) {
     switch (kernel_num) {
         case 1:
             softmax_forward1(out, inp, N, C, block_size);
@@ -661,7 +715,7 @@ int main(int argc, char **argv) {
                                               kernel_num, d_out, d_inp, B * T, V, block_size
                                               );
 
-        printf("block_size %4d | time %.4f ms | per token %.2f µs\n", block_size, elapsed_time, elapsed_time * 1'000 / (B*T));
+        printf("block_size %4d | time %.4f ms | per token %.2f µs\n", block_size, elapsed_time, elapsed_time * 1000 / (B*T));
     }
 
     // free memory

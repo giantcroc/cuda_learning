@@ -1,86 +1,63 @@
 #include "rmsnorm.h"
 #include "stdio.h"
-
-#define OFFSET(row, id, col) (row*col+id)
-#define FLOAT4(data) (reinterpret_cast<float4*>(&(data))[0])
-
-__global__ void rmsnorm_naive(float* in, float* out, const int M, const int N, float eps){
-    int idx=blockDim.x*blockIdx.x+threadIdx.x;
-    if(idx<M){
-        float* x=in + idx*N;
-        float sum=0;
-        for(int i=0;i<N;i++){
-            float temp=x[i];
-            sum+=temp*temp;
-        }
-        sum=sqrtf(sum/N+eps);
-        float* y=out+idx*N;
-        for(int i=0;i<N;i++){
-            y[i]=x[i]/sum;
-        }
-    }
-}
-
-__global__ void rmsnorm_shared(float* in, float* out, const int M, const int N, float eps){
-    int Block_size = blockDim.x;
-    extern __shared__ float shared[];
-    int idx=blockIdx.x;
-    int tid=threadIdx.x;
-
-    float* x=in + idx*N;
-    float sum=0;
-
-    for(int i=tid;i<N;i+=Block_size){
-        sum+=x[i]*x[i];
-    }
-    shared[tid]=sum;
-    __syncthreads();
-
-    for(int stride=Block_size/2;stride>0;stride/=2){
-        __syncthreads();
-        if(tid<stride){
-            shared[tid]+=shared[tid+stride];
-        }
-    }
-    sum=shared[0];
-    sum=sqrtf(sum/N+eps);
-    float* y=out+idx*N;
-    for(int i=0;i<N;i++){
-        y[i]=x[i]/sum;
-    }
-
-}
+#include <iostream>
 
 int main(void){
-    const int M=1,N=4;
-    const int Block_size=32, data_size=M*N*sizeof(float);
-    float* hin,*hout,*din,*dout, *dhout;
-    hin=(float*)malloc(data_size);
-    hout=(float*)malloc(data_size);
-    dhout=(float*)malloc(data_size);
+    const int M=1024,N=8192;
+    const int Block_size=32, data_size=M*N*sizeof(half);
+    half* hin,*hout,*din,*dout, *dhout, *weight, *residual, *dweight,*dresidual;
+    hin=(half*)malloc(data_size);
+    residual=(half*)malloc(data_size);
+    hout=(half*)malloc(data_size);
+    dhout=(half*)malloc(data_size);
+    weight=(half*)malloc(data_size);
     for(int i=0;i<M*N;i++){
         hin[i]=i+1;
+        residual[i] = 0;
+    }
+
+    for(int i=0;i<N;i++){
+        weight[i] =1;
     }
 
     cudaMalloc(&din, data_size);
     cudaMalloc(&dout,data_size);
+    cudaMalloc(&dweight,data_size);
+    cudaMalloc(&dresidual,data_size);
 
     cudaMemcpy(din,hin,data_size,cudaMemcpyDefault);
-    dim3 griddim(M);
-    dim3 blockdim(Block_size);
+    cudaMemcpy(dweight,weight,data_size,cudaMemcpyDefault);
+    cudaMemcpy(dresidual,residual,data_size,cudaMemcpyDefault);
 
-    rmsnorm_shared<<<griddim,blockdim, Block_size*sizeof(float)>>>(din,dout,M,N);
+    rms_norm_residual_kernel<half>(din,dresidual,dout,dweight,M,N,1,1e-5);
+
+    cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        std::cout << "CUDA Error: " << cudaGetErrorString(err) << std::endl;
+    }
+  
+    cudaDeviceSynchronize();
+
+    // 再次检查错误，确保设备同步
+    err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        std::cout << "CUDA Error after synchronization: " << cudaGetErrorString(err) << std::endl;
+    }
 
     cudaMemcpy(dhout, dout, data_size,cudaMemcpyDefault);
 
-    for(int i=0;i<M*N;i++){
-        printf("%f ",dhout[i]);
-    }
+    // for(int i=0;i<M*N;i++){
+    //     printf("%f ",__half2float(dhout[i]));
+    // }
 
     cudaFree(din);
     cudaFree(dout);
+    cudaFree(dweight);
+    cudaFree(dresidual);
     free(hin);
     free(hout);
     free(dhout);
+    free(residual);
+    free(weight);
     return 0;
 }
